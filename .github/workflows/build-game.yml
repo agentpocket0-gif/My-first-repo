@@ -10,6 +10,14 @@ on:
         description: "Game ka naam (optional)"
         required: false
         default: "My Game"
+      engine:
+        description: "Game type"
+        required: false
+        type: choice
+        options:
+          - three
+          - canvas2d
+        default: three
   issues:
     types: [labeled]
 
@@ -28,6 +36,7 @@ jobs:
         env:
           IDEA_INPUT: ${{ inputs.game_idea }}
           NAME_INPUT: ${{ inputs.game_name }}
+          ENGINE_INPUT: ${{ inputs.engine }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
@@ -35,16 +44,27 @@ jobs:
           if [ "${{ github.event_name }}" = "issues" ]; then
             printf '%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > /tmp/idea.txt
             echo "GAME_NAME=$(printf '%s' "$ISSUE_TITLE" | tr -cd '[:alnum: ]_-' | head -c 20)" >> "$GITHUB_ENV"
+            echo "ENGINE=three" >> "$GITHUB_ENV"
           else
             printf '%s\n' "$IDEA_INPUT" > /tmp/idea.txt
             echo "GAME_NAME=$(printf '%s' "$NAME_INPUT" | tr -cd '[:alnum: ]_-' | head -c 20)" >> "$GITHUB_ENV"
+            echo "ENGINE=${ENGINE_INPUT:-three}" >> "$GITHUB_ENV"
           fi
-          echo "---- Idea ----"; cat /tmp/idea.txt
+          echo "---- Idea ----"; cat /tmp/idea.txt; echo "Engine: $ENGINE"
+
+      - name: Download Three.js (3D games ke liye)
+        if: env.ENGINE == 'three'
+        run: |
+          curl -fsSL --retry 3 https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js -o /tmp/three.min.js
+          du -h /tmp/three.min.js
 
       - name: Generate game with DeepSeek
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python3 scripts/generate_game.py --idea-file /tmp/idea.txt --out game/index.html --name "$GAME_NAME"
+        run: |
+          ARGS=(--idea-file /tmp/idea.txt --out game/index.html --name "$GAME_NAME" --engine "$ENGINE")
+          if [ "$ENGINE" = "three" ]; then ARGS+=(--three-file /tmp/three.min.js); fi
+          python3 scripts/generate_game.py "${ARGS[@]}"
 
       - name: Set up Android SDK pieces
         run: |
