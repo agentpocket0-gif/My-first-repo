@@ -1,0 +1,78 @@
+name: Build Game APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_idea:
+        description: "Game ka idea (Hindi ya English mein likho)"
+        required: true
+      game_name:
+        description: "Game ka naam (optional)"
+        required: false
+        default: "My Game"
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Generate game and build APK
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'game-idea' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare inputs
+        env:
+          IDEA_INPUT: ${{ inputs.game_idea }}
+          NAME_INPUT: ${{ inputs.game_name }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p /tmp
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            printf '%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > /tmp/idea.txt
+            echo "GAME_NAME=$(printf '%s' "$ISSUE_TITLE" | tr -cd '[:alnum: ]_-' | head -c 20)" >> "$GITHUB_ENV"
+          else
+            printf '%s\n' "$IDEA_INPUT" > /tmp/idea.txt
+            echo "GAME_NAME=$(printf '%s' "$NAME_INPUT" | tr -cd '[:alnum: ]_-' | head -c 20)" >> "$GITHUB_ENV"
+          fi
+          echo "---- Idea ----"; cat /tmp/idea.txt
+
+      - name: Generate game with DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python3 scripts/generate_game.py --idea-file /tmp/idea.txt --out game/index.html --name "$GAME_NAME"
+
+      - name: Set up Android SDK pieces
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+
+      - name: Copy game into Android project
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp -f game/index.html android/app/src/main/assets/index.html
+          sed -i "s/APP_NAME/${GAME_NAME}/" android/app/src/main/res/values/strings.xml
+
+      - name: Build APK
+        run: |
+          cd android
+          gradle assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="game-$(date +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" android/app/build/outputs/apk/debug/app-debug.apk \
+            --title "$GAME_NAME" \
+            --notes "AI-generated game. Idea: $(head -c 200 /tmp/idea.txt)"

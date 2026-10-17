@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="hi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Space Dodge</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; background: #0b1026; font-family: system-ui, sans-serif; touch-action: none; }
+      #wrap { position: relative; width: 100%; height: 100%; }
+      canvas { display: block; width: 100%; height: 100%; }
+      .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #fff; background: rgba(11,16,38,0.75); padding: 24px; gap: 14px; }
+      .hidden { display: none; }
+      h1 { font-size: 34px; letter-spacing: 2px; }
+      h1 span { color: #ffd166; }
+      p { color: #a5b4fc; font-size: 16px; line-height: 1.6; }
+      button { background: #ffd166; color: #1b1b2f; border: none; padding: 14px 38px; border-radius: 999px; font-size: 18px; font-weight: 700; cursor: pointer; }
+      button:active { transform: scale(0.96); }
+      #hud { position: absolute; top: 12px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 18px; color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="game"></canvas>
+      <div id="hud"><span>⭐ स्कोर: <span id="score">0</span></span><span>🏆 बेस्ट: <span id="best">0</span></span></div>
+      <div class="overlay" id="startScreen">
+        <h1>SPACE <span>DODGE</span></h1>
+        <p>🚀 अपने जहाज़ को उल्का पत्थरों से बचाओ!<br />मोबाइल: उंगली खींचो · PC: ← → तीर</p>
+        <button id="startBtn">खेलना शुरू करो 🚀</button>
+      </div>
+      <div class="overlay hidden" id="overScreen">
+        <h1>💥 टक्कर!</h1>
+        <p>स्कोर: <span id="finalScore">0</span></p>
+        <button id="retryBtn">फिर से खेलो 🔄</button>
+      </div>
+    </div>
+    <script>
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const startScreen = document.getElementById("startScreen");
+      const overScreen = document.getElementById("overScreen");
+      const scoreEl = document.getElementById("score");
+      const bestEl = document.getElementById("best");
+      const finalScoreEl = document.getElementById("finalScore");
+      let W, H;
+      function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+      resize();
+      window.addEventListener("resize", resize);
+      const stars = Array.from({ length: 90 }, () => ({ x: Math.random() * 2000, y: Math.random() * 2000, r: Math.random() * 1.6 + 0.4, s: Math.random() * 0.4 + 0.1 }));
+      let ship, rocks, score, best = 0, playing = false, spawnTimer = 0, difficulty;
+      function init() { ship = { x: W / 2, y: H - 90, w: 34, h: 42, targetX: W / 2 }; rocks = []; score = 0; spawnTimer = 0; difficulty = 1; }
+      function spawnRock() {
+        rocks.push({ x: Math.random() * (W - 40) + 20, y: -40, r: Math.random() * 16 + 14, vy: (Math.random() * 1.5 + 2.2) * difficulty, vx: (Math.random() - 0.5) * 1.2, rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.08 });
+      }
+      function drawShip() {
+        ctx.save();
+        ctx.translate(ship.x, ship.y);
+        const tilt = Math.max(-0.35, Math.min(0.35, (ship.targetX - ship.x) * 0.006));
+        ctx.rotate(tilt);
+        ctx.fillStyle = "#ffd166";
+        ctx.beginPath();
+        ctx.moveTo(0, -ship.h / 2);
+        ctx.lineTo(ship.w / 2, ship.h / 2);
+        ctx.lineTo(0, ship.h / 2 - 10);
+        ctx.lineTo(-ship.w / 2, ship.h / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#4361ee";
+        ctx.beginPath();
+        ctx.arc(0, -2, 7, 0, Math.PI * 2);
+        ctx.fill();
+        const f = 10 + Math.random() * 10;
+        ctx.fillStyle = "rgba(255, 107, 107, 0.9)";
+        ctx.beginPath();
+        ctx.moveTo(-6, ship.h / 2 - 10);
+        ctx.lineTo(0, ship.h / 2 + f - 10);
+        ctx.lineTo(6, ship.h / 2 - 10);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      function drawRock(r) {
+        ctx.save();
+        ctx.translate(r.x, r.y);
+        ctx.rotate(r.rot);
+        ctx.fillStyle = "#8892b0";
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          const rr = r.r * (0.75 + ((i * 7) % 3) * 0.12);
+          ctx[i === 0 ? "moveTo" : "lineTo"](Math.cos(a) * rr, Math.sin(a) * rr);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#5d687f";
+        ctx.beginPath();
+        ctx.arc(-r.r * 0.25, -r.r * 0.2, r.r * 0.22, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      function update() {
+        if (!playing) return;
+        score += 0.02 * difficulty;
+        difficulty += 0.0012;
+        scoreEl.textContent = Math.floor(score);
+        ship.x += (ship.targetX - ship.x) * 0.18;
+        spawnTimer -= 1;
+        if (spawnTimer <= 0) { spawnRock(); spawnTimer = Math.max(18, 55 - difficulty * 18); }
+        for (const r of rocks) {
+          r.y += r.vy; r.x += r.vx; r.rot += r.vr;
+          if (r.x < r.r || r.x > W - r.r) r.vx *= -1;
+          const dx = r.x - ship.x, dy = r.y - ship.y;
+          if (Math.sqrt(dx * dx + dy * dy) < r.r + 18) gameOver();
+        }
+        rocks = rocks.filter(r => r.y < H + 60);
+      }
+      function draw() {
+        ctx.fillStyle = "#0b1026";
+        ctx.fillRect(0, 0, W, H);
+        for (const s of stars) {
+          const y = (s.y + performance.now() * 0.02 * s.s * 8) % H;
+          const x = s.x % W;
+          ctx.fillStyle = "rgba(255,255,255," + (0.3 + s.s) + ")";
+          ctx.beginPath();
+          ctx.arc(x, y, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (const r of rocks) drawRock(r);
+        drawShip();
+      }
+      function gameOver() {
+        playing = false;
+        const sc = Math.floor(score);
+        if (sc > best) { best = sc; bestEl.textContent = best; }
+        finalScoreEl.textContent = sc;
+        overScreen.classList.remove("hidden");
+      }
+      function loop() { update(); draw(); requestAnimationFrame(loop); }
+      function start() { init(); playing = true; startScreen.classList.add("hidden"); overScreen.classList.add("hidden"); }
+      window.addEventListener("keydown", (e) => {
+        if (!playing) return;
+        if (e.key === "ArrowLeft") ship.targetX = Math.max(20, ship.targetX - 45);
+        if (e.key === "ArrowRight") ship.targetX = Math.min(W - 20, ship.targetX + 45);
+      });
+      window.addEventListener("touchstart", onDrag, { passive: false });
+      window.addEventListener("touchmove", onDrag, { passive: false });
+      function onDrag(e) { if (!playing) return; e.preventDefault(); ship.targetX = e.touches[0].clientX; }
+      document.getElementById("startBtn").addEventListener("click", start);
+      document.getElementById("retryBtn").addEventListener("click", start);
+      loop();
+    </script>
+  </body>
+</html>
